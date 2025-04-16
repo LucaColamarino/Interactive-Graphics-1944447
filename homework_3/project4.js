@@ -4,7 +4,7 @@
 // The given projection matrix is also a 4x4 matrix stored as an array in column-major order.
 // You can use the MatrixMult function defined in project4.html to multiply two 4x4 matrices in the same format.
 function GetModelViewProjection( projectionMatrix, translationX, translationY, translationZ, rotationX, rotationY )
-{
+{ 
 	// [TO-DO] Modify the code below to form the transformation matrix.
 	var trans = [
 		1, 0, 0, 0,
@@ -12,7 +12,22 @@ function GetModelViewProjection( projectionMatrix, translationX, translationY, t
 		0, 0, 1, 0,
 		translationX, translationY, translationZ, 1
 	];
-	var mvp = MatrixMult( projectionMatrix, trans );
+	var rotx = [
+		1,0,0,0,
+		0, Math.cos(rotationX), Math.sin(rotationX),0,
+		0,-Math.sin(rotationX),Math.cos(rotationX),0,
+		0,0,0,1
+	];
+	var roty = [
+		Math.cos(rotationY), 0,-Math.sin(rotationY),0,
+		0,1,0,0,
+		Math.sin(rotationY),0, Math.cos(rotationY),0,
+		0,0,0,1
+
+	];
+	var transrot = MatrixMult(trans,rotx);
+	transrot = MatrixMult(transrot,roty);
+	var mvp = MatrixMult( projectionMatrix, transrot );
 	return mvp;
 }
 
