@@ -35,46 +35,33 @@ function GetModelViewMatrix( translationX, translationY, translationZ, rotationX
 class MeshDrawer
 {
 
-	constructor()
+constructor()
 	{
 		const vsSource = `
 			attribute vec3 pos;
 			attribute vec2 texCoord;
 			attribute vec3 normal; // Vertex normal
 
-			uniform mat4 mvp;          // Model-View-Projection matrix
-			uniform mat4 mv;           // Model-View matrix (for transforming pos/normal to view space)
-			uniform mat3 normalMatrix; // Inverse-transpose of mv's upper 3x3 (for transforming normals)
+			uniform mat4 mvp;          
+			uniform mat4 mv;          
+			uniform mat3 normalMatrix; 
 			uniform bool swapYZ;
 
 			varying vec2 vTexCoord;
-			varying vec3 vNormal;      // Normal in view space
-			varying vec3 vViewPos;     // Vertex position in view space
+			varying vec3 vNormalView;    
+			varying vec3 vPosView;       
 
 			void main() {
 				vec3 position = pos;
+                vec3 transformedNormal = normal;
 				if (swapYZ) {
 					position = vec3(pos.x, pos.z, pos.y);
+                    transformedNormal = vec3(normal.x, normal.z, normal.y);
 				}
 				
 				gl_Position = mvp * vec4(position, 1.0);
-				
-				// Transform position and normal to view space for lighting calculations
-                // Use original 'pos' for lighting calculations, not the swapped 'position'
-                // unless normals are also meant to be swapped.
-                // Assuming swapYZ is for display coordinate system change, lighting should use consistent model coordinates.
-                // Let's assume normal is also swapped if pos is swapped, for consistency or ensure normalMatrix handles it.
-                // A safer bet is to transform the *original* normal and position for lighting.
-
-                vec3 actualPos = pos; // Use original non-swapped pos for view space calculations
-                vec3 actualNormal = normal;
-                if (swapYZ) { // If YZ is swapped for position, it should be for normal too
-                    actualNormal = vec3(normal.x, normal.z, normal.y);
-                }
-
-
-				vViewPos = (mv * vec4(actualPos, 1.0)).xyz;
-				vNormal = normalize(normalMatrix * actualNormal);
+				vPosView = (mv * vec4(position, 1.0)).xyz;
+				vNormalView = normalize(normalMatrix * transformedNormal);
 				vTexCoord = texCoord;
 			}
 		`;
@@ -83,55 +70,50 @@ class MeshDrawer
 			precision mediump float;
 
 			varying vec2 vTexCoord;
-			varying vec3 vNormal;      // Normal in view space
-			varying vec3 vViewPos;     // Vertex position in view space
+			varying vec3 vNormalView;  
+			varying vec3 vPosView;    
 
 			uniform bool showTex;
 			uniform sampler2D textureSampler;
-			uniform vec3 lightDir;     // Light direction in view space
+			uniform vec3 lightDirView;
 			uniform float shininess;
 
-            // Material and light properties (can be made uniforms for more flexibility)
-            uniform vec3 ambientColor;
-            uniform vec3 diffuseColor;
-            uniform vec3 specularColor;
-
+            uniform vec3 ambientMaterialColor;  
+            uniform vec3 diffuseMaterialColor;  
+            uniform vec3 specularMaterialColor; 
 
 			void main() {
-				vec3 N = normalize(vNormal);
-				vec3 L = normalize(lightDir); // Light direction is already in view space
-				vec3 V = normalize(-vViewPos); // View vector (from fragment to eye)
-				vec3 H = normalize(L + V);     // Halfway vector
+				vec3 N = normalize(vNormalView);
+				vec3 L = normalize(lightDirView); 
+				vec3 V = normalize(-vPosView);   
+				vec3 H = normalize(L + V);     
 
-				// Ambient
-				vec3 ambient = ambientColor; // Base ambient material color
+				vec3 ambient = ambientMaterialColor; 
 
-				// Diffuse
-				float diff = max(dot(N, L), 0.0);
-				vec3 diffuse = diffuseColor * diff;
+				float NdotL = max(dot(N, L), 0.0);
+                vec3 actualDiffuseKd;
+                if (showTex) {
+                    actualDiffuseKd = texture2D(textureSampler, vTexCoord).rgb; // Kd from texture
+                } else {
+                    actualDiffuseKd = diffuseMaterialColor; // Kd is white (1,1,1)
+                }
+				vec3 diffuse = actualDiffuseKd * NdotL;
 
-				// Specular (Blinn-Phong)
-				float spec = 0.0;
-				if (diff > 0.0) { // only calculate specular if light hits the surface
-					spec = pow(max(dot(N, H), 0.0), shininess);
-				}
-				vec3 specular = specularColor * spec;
+				vec3 actualSpecularKs = specularMaterialColor; // Ks is white (1,1,1)
+				float NdotH = max(dot(N, H), 0.0);
+                float specIntensity = 0.0;
+                if (NdotL > 0.0) { // Only show specular if light hits the surface
+				    specIntensity = pow(NdotH, shininess);
+                }
+				vec3 specular = actualSpecularKs * specIntensity;
 
-        vec4 texColor;
-        if (showTex) {
-            texColor = texture2D(textureSampler, vTexCoord);
-        } else {
-
-            texColor = vec4(0.8, 0.8, 0.8, 1.0); 
-        }
-
-				vec3 finalColor = (ambient + diffuse) * texColor.rgb + specular;
-
-				 if (!showTex) {
-				 	gl_FragColor =  vec4(0.8, 0.8, 0.8, 1.0);
-                 } else {
-				    gl_FragColor = vec4(finalColor, texColor.a);
-                 }
+				vec3 finalColor = ambient + diffuse + specular;
+                
+                float finalAlpha = 1.0;
+                if (showTex) {
+                    finalAlpha = texture2D(textureSampler, vTexCoord).a;
+                }
+				gl_FragColor = vec4(finalColor, finalAlpha);
 			}
 		`;
 
@@ -148,12 +130,12 @@ class MeshDrawer
 		
 		this.showTexLoc = gl.getUniformLocation(this.prog, 'showTex');
 		this.textureSamplerLoc = gl.getUniformLocation(this.prog, 'textureSampler');
-		this.lightDirLoc = gl.getUniformLocation(this.prog, 'lightDir');
+		this.lightDirLoc = gl.getUniformLocation(this.prog, 'lightDirView');
 		this.shininessLoc = gl.getUniformLocation(this.prog, 'shininess');
 
-        this.ambientColorLoc = gl.getUniformLocation(this.prog, 'ambientColor');
-        this.diffuseColorLoc = gl.getUniformLocation(this.prog, 'diffuseColor');
-        this.specularColorLoc = gl.getUniformLocation(this.prog, 'specularColor');
+        this.ambientMaterialColorLoc = gl.getUniformLocation(this.prog, 'ambientMaterialColor');
+        this.diffuseMaterialColorLoc = gl.getUniformLocation(this.prog, 'diffuseMaterialColor');
+        this.specularMaterialColorLoc = gl.getUniformLocation(this.prog, 'specularMaterialColor');
 
 		this.vertBuffer = gl.createBuffer();
 		this.texBuffer = gl.createBuffer();
@@ -163,20 +145,29 @@ class MeshDrawer
 		gl.bindTexture(gl.TEXTURE_2D, this.texture);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
         gl.bindTexture(gl.TEXTURE_2D, null);
 
-
 		this.numTriangles = 0;
 		this.useTexture = true; 
 		this.swap = false;
+
         gl.useProgram(this.prog); 
-        gl.uniform3f(this.ambientColorLoc, 0.2, 0.2, 0.2);
-        gl.uniform3f(this.diffuseColorLoc, 0.7, 0.7, 0.7);
-        gl.uniform3f(this.specularColorLoc, 1.0, 1.0, 1.0);
+        gl.uniform3f(this.ambientMaterialColorLoc, 0.1, 0.1, 0.1); 
+        gl.uniform3f(this.diffuseMaterialColorLoc, 1.0, 1.0, 1.0);  
+        gl.uniform3f(this.specularMaterialColorLoc, 1.0, 1.0, 1.0); 
 	}
+	
+
+
+
+
+
+
+
+
+
 	
 	setMesh( vertPos, texCoords, normals )
 	{
